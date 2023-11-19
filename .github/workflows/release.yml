@@ -17,9 +17,22 @@ jobs:
         goos: [ linux, windows, darwin ]
         goarch: [ amd64, arm64 ]
       fail-fast: false
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOARM: ${{ matrix.goarm }}
+      CGO_ENABLED: 0
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v3
+
+      - name: Show workflow information
+        id: get_filename
+        run: |
+          export _NAME=$(jq ".[\"$GOOS-$GOARCH$GOARM\"].friendlyName" -r < .github/workflows/release_friendly_filenames.json)
+          echo "GOOS: $GOOS, GOARCH: $GOARCH, GOARM: $GOARM, RELEASE_NAME: $_NAME"
+          echo "ASSET_NAME=$_NAME" >> $GITHUB_OUTPUT
+          echo "ASSET_NAME=$_NAME" >> $GITHUB_ENV
 
       - name: Release
         uses: wangyoucao577/go-release-action@v1
@@ -30,5 +43,7 @@ jobs:
           build_flags: -trimpath
           ldflags: '-s -w -buildid='
           extra_files: LICENSE README.md config.yaml
+          asset_name: WeiboImageHound-${{ steps.get_filename.outputs.ASSET_NAME }}
+          overwrite: true
           md5sum: false
           sha256sum: true
