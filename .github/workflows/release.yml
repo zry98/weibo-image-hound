@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  release:
+    types:
+      - created
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  releases-matrix:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [ linux, windows, darwin ]
+        goarch: [ amd64, arm64 ]
+      fail-fast: false
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v3
+
+      - name: Release
+        uses: wangyoucao577/go-release-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          build_flags: -trimpath
+          ldflags: '-s -w -buildid='
+          extra_files: LICENSE README.md config.yaml
+          md5sum: false
+          sha256sum: true
