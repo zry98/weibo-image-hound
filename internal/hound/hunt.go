@@ -103,7 +103,7 @@ func (c *client) request(method string, URL string, reqHeaders http.Header) (sta
 	}
 	req.Header = baseHeaders.Clone()
 	for k, v := range reqHeaders {
-		if v != nil && len(v) > 0 && v[0] != "" {
+		if len(v) > 0 && v[0] != "" {
 			req.Header[k] = v
 		} else {
 			delete(req.Header, k)

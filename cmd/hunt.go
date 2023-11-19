@@ -47,7 +47,8 @@ func hunt(cmd *cobra.Command, args []string) {
 
 	IPs := config.Cache.Resolves
 	if len(IPs) == 0 {
-		panic(fmt.Errorf("no cached resolves found, please run `weibo-image-hound cache` first"))
+		fmt.Println("No cached resolves found, please run `weibo-image-hound cache` first")
+		return
 	}
 	fmt.Printf("Using %d cached resolves.\n", len(IPs))
 
@@ -62,32 +63,24 @@ urls:
 		fmt.Printf("Started hunting for %s\n", URL)
 		ctx, cancel := context.WithCancel(context.Background())
 		ch := make(chan hound.Result, len(IPs))
-		count := 0
 		go hound.Hunt(ctx, ch, URL, u.Port(), IPs, nil)
-	ips:
-		for {
-			select {
-			case result = <-ch:
-				count++
-				_ = bar.Add(1)
-				if count == len(IPs) { // all failed
-					fmt.Printf("[FAILED] All failed for %s\n", URL)
-					break ips
-				}
-				if result.Err != nil {
-					fmt.Printf("[FAILED] %s | %v\n", result.IP.String(), result.Err)
-					continue
-				}
-				if result.Status != http.StatusOK {
-					//fmt.Printf("[FAILED] %s | HTTP %d\n", result.IP.String(), result.Status)
-					continue
-				}
-				// succeeded
-				cancel()
-				break urls
+		for range IPs {
+			result = <-ch
+			_ = bar.Add(1)
+			if result.Err != nil {
+				fmt.Printf("[FAILED] %s | %v\n", result.IP.String(), result.Err)
+				continue
 			}
+			if result.Status != http.StatusOK {
+				//fmt.Printf("[FAILED] %s | HTTP %d\n", result.IP.String(), result.Status)
+				continue
+			}
+			// succeeded
+			cancel()
+			break urls
 		}
 		cancel()
+		fmt.Printf("[FAILED] All failed for %s\n", URL)
 	}
 
 	fmt.Printf("[SUCCESS] %s | %s | %d\n", URL, result.IP.String(), len(result.Body))
