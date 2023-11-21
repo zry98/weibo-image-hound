@@ -8,8 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
-
-	"weibo-image-hound/internal/probe/globalping"
 )
 
 var (
@@ -18,9 +16,6 @@ var (
 )
 
 type Config struct {
-	Providers struct {
-		GlobalPing globalping.Config `yaml:"global_ping,omitempty"`
-	} `yaml:"providers,omitempty"`
 	Cache struct {
 		Locations map[string][]string `yaml:"locations,omitempty,flow"`
 		Resolves  []net.IP            `yaml:"resolves,omitempty,flow"`

@@ -30,10 +30,15 @@ Example: weibo-image-hound hunt https://wx4.sinaimg.cn/mw2000/c49cf6fdgy1hjwxqm5
 
 func init() {
 	rootCmd.AddCommand(huntCmd)
-	huntCmd.Flags().StringP("output", "o", "", "Output file path.")
+	huntCmd.Flags().StringP("output", "o", "", "output file path (default: current directory, auto filename)")
 }
 
 func hunt(cmd *cobra.Command, args []string) {
+	if len(args) != 1 {
+		_ = cmd.Help()
+		return
+	}
+
 	dir, filename, err := parseOutputPath(cmd.Flag("output").Value.String())
 	if err != nil {
 		panic(fmt.Errorf("failed to parse output path: %w", err))
@@ -42,7 +47,7 @@ func hunt(cmd *cobra.Command, args []string) {
 	URL := args[0]
 	u, err := parseURL(URL)
 	if err != nil {
-		panic(fmt.Errorf("invalid Weibo image URL: %w", err))
+		panic(fmt.Errorf("invalid URL: %w", err))
 	}
 
 	IPs := config.Cache.Resolves
@@ -61,18 +66,20 @@ func hunt(cmd *cobra.Command, args []string) {
 urls:
 	for _, URL = range URLs {
 		fmt.Printf("Started hunting for %s\n", URL)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(cmd.Context())
 		ch := make(chan hound.Result, len(IPs))
 		go hound.Hunt(ctx, ch, URL, u.Port(), IPs, nil)
 		for range IPs {
 			result = <-ch
 			_ = bar.Add(1)
 			if result.Err != nil {
-				fmt.Printf("[FAILED] %s | %v\n", result.IP.String(), result.Err)
+				fmt.Fprintf(os.Stderr, "[FAILED] %s | %v\n", result.IP.String(), result.Err)
 				continue
 			}
 			if result.Status != http.StatusOK {
-				//fmt.Printf("[FAILED] %s | HTTP %d\n", result.IP.String(), result.Status)
+				if result.Status != http.StatusMovedPermanently {
+					fmt.Fprintf(os.Stderr, "[FAILED] %s | HTTP %d\n", result.IP.String(), result.Status)
+				}
 				continue
 			}
 			// succeeded
@@ -89,7 +96,7 @@ urls:
 
 	fmt.Printf("[SUCCESS] %s | %s | %d\n", URL, result.IP.String(), len(result.Body))
 	// write to file
-	if filename == "." || filename == "/" { // build urls filename when not specified
+	if filename == "." || filename == "/" { // build filename when not specified
 		filename = u.Path[strings.LastIndex(u.Path, "/")+1:]
 		if strings.LastIndex(filename, ".") == -1 { // no extension or empty
 			mimeType := result.Headers.Get("content-type")
@@ -122,7 +129,7 @@ urls:
 	fmt.Printf("Saved %s to %s\n", URL, path)
 }
 
-// parseURL parses a URL string and returns an url.URL struct, with all needed stuff fixed up.
+// parseURL parses a URL string and returns an url.URL struct, with all the required stuff fixed up.
 func parseURL(URL string) (*url.URL, error) {
 	if URL == "" {
 		return nil, fmt.Errorf("empty")

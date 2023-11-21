@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andybalholm/brotli"
@@ -17,7 +18,7 @@ import (
 
 const (
 	baseURL                      = "https://api.globalping.io/v1"
-	requestTimeout               = 10 * time.Second
+	requestTimeout               = 15 * time.Second
 	getMeasurementInterval       = 5 * time.Second
 	getMeasurementOverallTimeout = 1 * time.Minute
 )
@@ -31,33 +32,34 @@ var (
 	}
 
 	// Geographic Region names based on the UN [Standard Country or Area Codes for Statistical Use (M49)](https://unstats.un.org/unsd/methodology/m49/).
-	validRegions = []string{"Northern Africa", "Eastern Africa", "Middle Africa", "Southern Africa", "Western Africa", "Caribbean", "Central America", "South America", "Northern America", "Central Asia", "Eastern Asia", "South-eastern Asia", "Southern Asia", "Western Asia", "Eastern Europe", "Northern Europe", "Southern Europe", "Western Europe", "Australia and New Zealand", "Melanesia", "Micronesia", "Polynesia"}
+	defaultRegions = []string{"Northern Africa", "Eastern Africa", "Middle Africa", "Southern Africa", "Western Africa", "Caribbean", "Central America", "South America", "Northern America", "Central Asia", "Eastern Asia", "South-eastern Asia", "Southern Asia", "Western Asia", "Eastern Europe", "Northern Europe", "Southern Europe", "Western Europe", "Australia and New Zealand", "Melanesia", "Micronesia", "Polynesia"}
 )
 
 // client represents a client for the GlobalPing API.
 type client struct {
 	*http.Client
-	//token string
-	eTag string
+	eTags map[string]string
+	mu    sync.Mutex
 }
 
 // createMeasurement creates a new measurement and returns its ID.
 // API `POST /v1/measurements`, documentation at https://www.jsdelivr.com/docs/api.globalping.io#post-/v1/measurements
-func (c *client) createMeasurement(hostname string, regions []string) (ID string, err error) {
+func (c *client) createMeasurement(hostname string, regions []string) (string, error) {
+	if hostname == "" {
+		return "", fmt.Errorf("no hostname specified")
+	}
+	if len(regions) == 0 {
+		return "", fmt.Errorf("no regions specified")
+	}
 	mLocations := make([]location, 0, len(regions))
 	for _, r := range regions {
-		if slices.Contains(validRegions, r) {
-			mLocations = append(mLocations, location{
-				Magic: r, // FIXME: wait for API to fix Region filter
-				Limit: 5,
-			})
-		}
-	}
-	if len(mLocations) == 0 {
-		return "", fmt.Errorf("no valid region specified")
+		mLocations = append(mLocations, location{
+			Region: r,
+			Limit:  5,
+		})
 	}
 
-	reqBody, err := json.Marshal(requestBody{
+	reqBody, err := json.Marshal(measurementRequest{
 		Type:      measurementTypePing,
 		Target:    hostname,
 		Locations: mLocations,
@@ -72,7 +74,7 @@ func (c *client) createMeasurement(hostname string, regions []string) (ID string
 		return "", err
 	}
 
-	var r responseBodyOnSuccess
+	var r responseOnSuccess
 	if err = json.Unmarshal(body, &r); err != nil {
 		return "", fmt.Errorf("failed to unmarshal response body: %w", err)
 	}
@@ -80,7 +82,7 @@ func (c *client) createMeasurement(hostname string, regions []string) (ID string
 		return "", fmt.Errorf("no probes available")
 	}
 	if r.ID == "" {
-		return "", fmt.Errorf("no ID returned")
+		return "", fmt.Errorf("invalid response: %s", string(body))
 	}
 	return r.ID, nil
 }
@@ -89,10 +91,14 @@ func (c *client) createMeasurement(hostname string, regions []string) (ID string
 // API `GET /v1/measurements/{id}`, documentation at https://www.jsdelivr.com/docs/api.globalping.io#get-/v1/measurements/-id-
 func (c *client) getMeasurement(ID string) ([]measurementResult, error) {
 	if ID == "" {
-		return nil, fmt.Errorf("invalid measurement ID")
+		return nil, fmt.Errorf("no measurement ID specified")
 	}
 	URL := baseURL + "/measurements/" + ID
-	defer func() { c.eTag = "" }()
+	defer func() {
+		c.mu.Lock()
+		delete(c.eTags, URL)
+		c.mu.Unlock()
+	}()
 
 	ticker := time.NewTicker(getMeasurementInterval)
 	defer ticker.Stop()
@@ -103,25 +109,27 @@ func (c *client) getMeasurement(ID string) ([]measurementResult, error) {
 		case <-ticker.C:
 			body, err := c.request(http.MethodGet, URL, nil, nil)
 			if err != nil {
-				fmt.Printf("failed to get measurement: %v\n", err)
+				fmt.Fprintf(os.Stderr, "failed to get measurement: %v\n", err)
 				continue
 			}
 			if body == nil { // HTTP 304 Not Modified
+				fmt.Fprintf(os.Stderr, "Measurement %s in progress...\n", ID)
 				continue
 			}
 
-			var r responseBodyOnSuccess
+			var r responseOnSuccess
 			if err = json.Unmarshal(body, &r); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal response body: %w", err)
 			}
 			if r.ID == "" {
-				return nil, fmt.Errorf("invalid response")
+				return nil, fmt.Errorf("invalid response: %s", string(body))
 			}
 			switch r.Status {
 			case "in-progress":
-				fmt.Printf("Measurement %s in progress...\n", r.ID)
+				fmt.Fprintf(os.Stderr, "Measurement %s in progress...\n", r.ID)
 				continue
 			case "finished":
+				fmt.Fprintf(os.Stderr, "Measurement %s finished with %d results.\n", r.ID, len(r.Results))
 				return r.Results, nil
 			default:
 				return nil, fmt.Errorf("invalid response: unknown status \"%s\"", r.Status)
@@ -135,7 +143,8 @@ func (c *client) getMeasurement(ID string) ([]measurementResult, error) {
 // getProbes returns a list of all currently connected probes.
 // API `GET /v1/probes`, documentation at https://www.jsdelivr.com/docs/api.globalping.io#get-/v1/probes
 func (c *client) getProbes() ([]probe, error) {
-	body, err := c.request(http.MethodGet, baseURL+"/probes", nil, nil)
+	URL := baseURL + "/probes"
+	body, err := c.request(http.MethodGet, URL, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -158,17 +167,20 @@ func (c *client) request(method string, URL string, reqBody io.Reader, reqHeader
 	}
 	req.Header = baseReqHeaders.Clone()
 	for k, v := range reqHeaders {
+		// not using req.Header.Set() and .Del() in case of non-canonical key
 		if len(v) > 0 && v[0] != "" {
 			req.Header[k] = v
 		} else {
 			delete(req.Header, k)
 		}
 	}
-	if method != http.MethodPost {
+	if method == http.MethodGet {
 		req.Header.Del("content-type")
-	}
-	if c.eTag != "" {
-		req.Header.Set("if-none-match", c.eTag)
+		c.mu.Lock()
+		if eTag, ok := c.eTags[URL]; ok && eTag != "" {
+			req.Header.Set("if-none-match", eTag)
+		}
+		c.mu.Unlock()
 	}
 
 	resp, err := c.Do(req)
@@ -177,42 +189,38 @@ func (c *client) request(method string, URL string, reqBody io.Reader, reqHeader
 	}
 	defer resp.Body.Close()
 
-	var respBody []byte
+	var body []byte
 	if resp.Header.Get("content-encoding") == "br" {
-		respBody, err = io.ReadAll(brotli.NewReader(resp.Body))
+		body, err = io.ReadAll(brotli.NewReader(resp.Body))
 	} else {
-		respBody, err = io.ReadAll(resp.Body)
+		body, err = io.ReadAll(resp.Body)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	eTag := resp.Header.Get("ETag")
-	if eTag != "" {
-		c.eTag = eTag
+	if method == http.MethodGet && eTag != "" {
+		c.mu.Lock()
+		c.eTags[URL] = eTag
+		c.mu.Unlock()
 	}
 	switch resp.StatusCode {
-	case http.StatusOK:
-		fallthrough
-	case http.StatusAccepted:
-		return respBody, nil
+	case http.StatusOK, http.StatusAccepted:
+		return body, nil
 	case http.StatusNotModified:
 		return nil, nil
-	case http.StatusBadRequest:
-		fallthrough
-	case http.StatusNotFound:
-		fallthrough
-	case http.StatusUnprocessableEntity:
-		var body responseBodyOnError
-		if err = json.Unmarshal(respBody, &body); err != nil {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity:
+		var r responseOnError
+		if err = json.Unmarshal(body, &r); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal response body: %w", err)
 		}
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("API returned error: (type \"%s\") %s", body.Error.Type, body.Error.Message))
-		if resp.StatusCode == http.StatusBadRequest && len(body.Error.Params) > 0 {
-			sb.WriteString("\nError params:")
-			for _, p := range body.Error.Params {
-				sb.WriteString(fmt.Sprintf("  %s: %s\n", p, body.Error.Params[p]))
+		sb.WriteString(fmt.Sprintf("API returned error: (type \"%s\") %s", r.Error.Type, r.Error.Message))
+		if resp.StatusCode == http.StatusBadRequest && len(r.Error.Params) > 0 {
+			sb.WriteString("\nError params:\n")
+			for p, msg := range r.Error.Params {
+				sb.WriteString(fmt.Sprintf("  - %s: %s\n", p, msg))
 			}
 		}
 		return nil, fmt.Errorf(sb.String())
@@ -222,5 +230,5 @@ func (c *client) request(method string, URL string, reqBody io.Reader, reqHeader
 		}
 		return nil, fmt.Errorf("too many requests")
 	}
-	return respBody, fmt.Errorf("unexpected response (HTTP %d)", resp.StatusCode)
+	return body, fmt.Errorf("unexpected response (HTTP %d)", resp.StatusCode)
 }

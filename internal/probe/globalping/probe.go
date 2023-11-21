@@ -4,21 +4,23 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"slices"
 )
 
 type Config struct {
 	//APIToken string `yaml:"api_token,omitempty"`
 }
 
-func NewClient(token ...string) *client {
+func NewClient() *client {
 	return &client{
 		Client: &http.Client{},
-		//token:  token,
+		eTags:  make(map[string]string),
 	}
 }
 
 func (c *client) Resolve(hostname string, locations []string) ([]net.IP, error) {
+	if len(locations) == 0 { // use all default regions if none specified
+		locations = defaultRegions
+	}
 	mID, err := c.createMeasurement(hostname, locations)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create measurement: %w", err)
@@ -38,7 +40,7 @@ func (c *client) Resolve(hostname string, locations []string) ([]net.IP, error) 
 	return IPs, nil
 }
 
-func (c *client) Locations() ([]string, error) {
+func (c *client) Probes() ([]string, error) {
 	probes, err := c.getProbes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get probes: %w", err)
@@ -46,9 +48,13 @@ func (c *client) Locations() ([]string, error) {
 
 	locations := make([]string, 0, len(probes))
 	for _, p := range probes {
-		if p.Location.Region != "" && slices.Contains(validRegions, p.Location.Region) {
+		if p.Location.Region != "" {
 			locations = append(locations, p.Location.Region)
 		}
 	}
 	return locations, nil
+}
+
+func (c *client) Locations() ([]string, error) {
+	return defaultRegions, nil
 }

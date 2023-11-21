@@ -12,11 +12,11 @@ import (
 )
 
 type Result struct {
-	IP      net.IP
-	Status  int
-	Headers http.Header
-	Body    []byte
 	Err     error
+	Headers http.Header
+	IP      net.IP
+	Body    []byte
+	Status  int
 }
 
 func Hunt(ctx context.Context, ch chan<- Result, URL string, port string, IPs []net.IP, headers http.Header) {
@@ -103,6 +103,7 @@ func (c *client) request(method string, URL string, reqHeaders http.Header) (sta
 	}
 	req.Header = baseHeaders.Clone()
 	for k, v := range reqHeaders {
+		// not using req.Header.Set() and .Del() in case of non-canonical key
 		if len(v) > 0 && v[0] != "" {
 			req.Header[k] = v
 		} else {

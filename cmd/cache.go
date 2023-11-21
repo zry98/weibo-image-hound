@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -17,14 +18,14 @@ var cacheCmd = &cobra.Command{
 	Use:   "cache [flags]",
 	Short: "Cache resolved IP addresses for all Weibo image hostnames",
 	Long: `Cache resolved IP addresses for all Weibo image hostnames. 
-Example: weibo-image-hound cache -p globalping`,
+Example: weibo-image-hound cache -p globalping -f`,
 	Run: cache,
 }
 
 func init() {
 	rootCmd.AddCommand(cacheCmd)
-	cacheCmd.Flags().StringP("provider", "p", "globalping", "Probe provider to use.")
-	cacheCmd.Flags().BoolP("force", "f", false, "Force overwrite existing cached resolves.")
+	cacheCmd.Flags().StringP("provider", "p", "globalping", "probe provider to use")
+	cacheCmd.Flags().BoolP("force", "f", false, "force overwrite existing cached resolves")
 }
 
 func cache(cmd *cobra.Command, args []string) {
@@ -37,31 +38,38 @@ func cache(cmd *cobra.Command, args []string) {
 		panic(fmt.Errorf("unknown provider: %s", name))
 	}
 
-	// cache locations
-	if config.Cache.Locations == nil {
-		config.Cache.Locations = make(map[string][]string)
-	}
+	// cache resolves
 	locations, err := provider.Locations()
 	if err != nil {
 		panic(fmt.Errorf("failed to get locations: %w", err))
 	}
 	locations = unique(locations)
-	config.Cache.Locations[name] = locations
-	saveConfig()
-	fmt.Printf("Cached %d locations for probe provider \"%s\".\n", len(locations), name)
+	fmt.Printf("Using %d locations.\n", len(locations))
 
-	// cache resolves
+	hostnames := weibo.Hostnames()
+	var wg sync.WaitGroup
+	ch := make(chan []net.IP, len(hostnames))
+	for _, h := range hostnames {
+		wg.Add(1)
+		go func(hostname string) {
+			defer wg.Done()
+			IPs, err := provider.Resolve(hostname, locations)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to resolve \"%s\": %v\n", hostname, err)
+				ch <- nil
+				return
+			}
+			ch <- IPs
+		}(h)
+	}
+	wg.Wait()
+
 	resolves := config.Cache.Resolves
 	if cmd.Flag("force").Changed { // force overwrite
 		resolves = nil
 	}
-	for _, hostname := range weibo.Hostnames() {
-		IPs, err := provider.Resolve(hostname, locations)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to resolve %s: %v\n", hostname, err)
-			continue
-		}
-		resolves = append(resolves, IPs...)
+	for range hostnames {
+		resolves = append(resolves, <-ch...)
 	}
 	config.Cache.Resolves = uniqueIPs(resolves)
 	saveConfig()

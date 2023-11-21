@@ -6,18 +6,16 @@ import (
 	"net/http"
 )
 
-type requestBody struct {
-	Type      measurementType `json:"type"`
-	Target    string          `json:"target"`
-	Locations []location      `json:"locations"`
-	//Limit   uint8 `json:"limit,omitempty"`  // global limit not used
-	Options interface{} `json:"measurementOptions,omitempty"`
-	// options
-	PingOptions *pingOptions `json:"-"`
-	HTTPOptions *httpOptions `json:"-"`
+type measurementRequest struct {
+	pingOptions *pingOptions
+	httpOptions *httpOptions
+	Type        measurementType `json:"type"`
+	Target      string          `json:"target"`
+	Options     interface{}     `json:"measurementOptions,omitempty"`
+	Locations   []location      `json:"locations"`
 }
 
-func (r requestBody) MarshalJSON() ([]byte, error) {
+func (r *measurementRequest) MarshalJSON() ([]byte, error) {
 	if r.Target == "" {
 		return nil, fmt.Errorf(".target is empty")
 	}
@@ -25,23 +23,23 @@ func (r requestBody) MarshalJSON() ([]byte, error) {
 		return nil, fmt.Errorf(".locations is empty")
 	}
 
-	type alias requestBody
-	a := alias(r)
+	type alias measurementRequest
+	a := alias(*r)
 	switch r.Type {
 	case measurementTypePing:
-		if r.PingOptions != nil {
-			if r.PingOptions.Packets == 0 {
-				r.PingOptions.Packets = 1
-			}
-		} else {
-			r.PingOptions = &pingOptions{Packets: 1}
+		if r.pingOptions == nil {
+			r.pingOptions = &pingOptions{PacketsCount: 1}
 		}
-		a.Options = r.PingOptions
+		if r.pingOptions.PacketsCount == 0 {
+			r.pingOptions.PacketsCount = 1
+		}
+		a.Options = r.pingOptions
 	case measurementTypeHTTP:
 		// TODO: validate
-		if r.HTTPOptions != nil {
-			a.Options = r.HTTPOptions
+		if r.httpOptions == nil {
+			r.httpOptions = &httpOptions{}
 		}
+		a.Options = r.httpOptions
 	default:
 		return nil, fmt.Errorf("unknown .type: %s", r.Type)
 	}
@@ -55,35 +53,26 @@ const (
 	measurementTypeHTTP measurementType = "http"
 )
 
-type location struct {
-	Region  string `json:"region,omitempty"`
-	Country string `json:"country,omitempty"`
-	City    string `json:"city,omitempty"`
-	Magic   string `json:"magic,omitempty"`
-	Limit   uint8  `json:"limit"`
-}
-
 type pingOptions struct {
-	Packets uint8 `json:"packets,omitempty"`
+	PacketsCount uint8 `json:"packets,omitempty"`
 }
 
 type httpOptions struct {
-	Request struct {
+	Protocol httpProtocol `json:"protocol,omitempty"`
+	Request  struct {
 		Method  httpMethod        `json:"method,omitempty"`
+		Headers map[string]string `json:"headers,omitempty"`
 		Host    string            `json:"host,omitempty"`
 		Path    string            `json:"path,omitempty"`
 		Query   string            `json:"query,omitempty"`
-		Headers map[string]string `json:"headers,omitempty"`
 	} `json:"request,omitempty"`
-	Port     uint16       `json:"port,omitempty"`
-	Protocol httpProtocol `json:"protocol,omitempty"`
+	Port uint16 `json:"port,omitempty"`
 }
 
 type httpMethod string
 
 const (
 	httpMethodHEAD httpMethod = http.MethodHead
-	//httpMethodGET  httpMethod = http.MethodGet
 )
 
 type httpProtocol string
@@ -94,30 +83,36 @@ const (
 	httpProtocolHTTP2 httpProtocol = "HTTP2"
 )
 
-type responseBodyOnSuccess struct {
-	ID          string              `json:"id"`
-	ProbesCount uint8               `json:"probesCount"`
-	Status      string              `json:"status"`
-	Results     []measurementResult `json:"results"`
+type location struct {
+	Region  string `json:"region,omitempty"`
+	Country string `json:"country,omitempty"`
+	City    string `json:"city,omitempty"`
+	Limit   uint8  `json:"limit"`
 }
 
-type responseBodyOnError struct {
+type responseOnSuccess struct {
+	ID          string              `json:"id"`
+	Status      string              `json:"status"`
+	Results     []measurementResult `json:"results"`
+	ProbesCount uint8               `json:"probesCount"`
+}
+
+type responseOnError struct {
 	Error struct {
+		Params  map[string]string `json:"params"` // bad request only
 		Type    string            `json:"type"`
 		Message string            `json:"message"`
-		Params  map[string]string `json:"params"` // only for bad request
 	} `json:"error"`
 }
 
 type measurementResult struct {
-	Probe  probe `json:"probe"`
 	Result struct {
-		Status          string `json:"status"`
-		ResolvedAddress string `json:"resolvedAddress"`
-		// HTTP type measurement only
-		HTTPStatusCode uint16            `json:"statusCode"`
-		HTTPHeaders    map[string]string `json:"headers"`
+		Status          string            `json:"status"`
+		HTTPHeaders     map[string]string `json:"headers"` // HTTP measurement only
+		ResolvedAddress string            `json:"resolvedAddress"`
+		HTTPStatusCode  uint16            `json:"statusCode"` // HTTP measurement only
 	} `json:"result"`
+	Probe probe `json:"probe"`
 }
 
 type probe struct {
