@@ -24,7 +24,7 @@ var huntCmd = &cobra.Command{
 	Use:   "hunt [URL] [flags]",
 	Short: "Hunt for an uncensored Weibo image, given its URL",
 	Long: `Hunt for an uncensored Weibo image, given its URL. 
-Example: weibo-image-hound hunt https://wx1.sinaimg.cn/mw690/006UeiBSgy1hjnwewgeclj30u01400xm.jpg`,
+Example: weibo-image-hound hunt https://wx4.sinaimg.cn/mw2000/c49cf6fdgy1hjwxqm5ctrj20k04zytjs.jpg`,
 	Run: hunt,
 }
 
@@ -81,6 +81,10 @@ urls:
 		}
 		cancel()
 		fmt.Printf("[FAILED] All failed for %s\n", URL)
+	}
+	if result.Err != nil || result.Status != http.StatusOK {
+		fmt.Printf("[FAILED] Unfortunately, all %d resolves failed.\n", len(IPs))
+		return
 	}
 
 	fmt.Printf("[SUCCESS] %s | %s | %d\n", URL, result.IP.String(), len(result.Body))

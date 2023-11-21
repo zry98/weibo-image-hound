@@ -22,30 +22,24 @@ on:
       - '.github/workflows/*.yml'
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - uses: actions/setup-go@v4
-        with:
-          go-version: ^1.21
-
-      - uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          args: '--disable unused'
-
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: ^1.21
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: '--disable unused'
 
       - name: Get project dependencies
         run: go mod download
