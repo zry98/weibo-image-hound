@@ -5,11 +5,11 @@ import (
 	"net"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"weibo-image-hound/internal/probe"
 	"weibo-image-hound/internal/probe/globalping"
 	"weibo-image-hound/internal/weibo"
-
-	"github.com/spf13/cobra"
 )
 
 // cacheCmd represents the cache command

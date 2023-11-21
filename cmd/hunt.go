@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"weibo-image-hound/internal/hound"
-	"weibo-image-hound/internal/weibo"
-
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
+
+	"weibo-image-hound/internal/hound"
+	"weibo-image-hound/internal/weibo"
 )
 
 // huntCmd represents the hunt command

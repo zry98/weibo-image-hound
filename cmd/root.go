@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"weibo-image-hound/internal/probe/globalping"
-
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"weibo-image-hound/internal/probe/globalping"
 )
 
 var (
